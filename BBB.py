@@ -2,7 +2,7 @@
 # @Author: Andre Goncalves
 # @Date:   2019-10-31 16:27:32
 # @Last Modified by:   Andre Goncalves
-# @Last Modified time: 2019-10-31 16:31:05
+# @Last Modified time: 2019-10-31 22:54:03
 
 """ code from: https://joshfeldman.net/ml/2018/12/17/WeightUncertainty.html
 """
@@ -74,27 +74,46 @@ class Linear_BBB(nn.Module):
 
 class MLP_BBB(nn.Module):
 
-    def __init__(self, hidden_units, noise_tol=.1, prior_var=1.):
+    def __init__(self, input_size, output_size, 
+                 hidden_units, noise_tol=.1, prior_var=1.):
 
+        self.arch = hidden_units
+        # self.num_hidden_layers = len(num_hidden_layers)
         # initialize the network like you would with a standard multilayer perceptron, but using the BBB layer
         super().__init__()
-        self.hidden = Linear_BBB(1, hidden_units, prior_var=prior_var)
-        self.out = Linear_BBB(hidden_units, 1, prior_var=prior_var)
+        # self.hidden = Linear_BBB(1, hidden_units, prior_var=prior_var)
+        # self.out = Linear_BBB(hidden_units, 1, prior_var=prior_var)
+        
+
+        self.layers = nn.ModuleList([Linear_BBB(input_size, self.arch[0], prior_var=prior_var)])  # input layer
+        for i in range(1, len(hidden_units)):
+            self.layers.extend([Linear_BBB(self.arch[i-1], self.arch[i], prior_var=prior_var) ])  # hidden layers
+        self.layers.append(Linear_BBB(self.arch[-1], output_size, prior_var=prior_var))  # output layers
+
         self.noise_tol = noise_tol  # we will use the noise tolerance to calculate our likelihood
+
 
     def forward(self, x):
         # again, this is equivalent to a standard multilayer perceptron
-        x = torch.sigmoid(self.hidden(x))
-        x = self.out(x)
+        for i in range(len(self.layers)-1):
+            x = torch.tanh(self.layers[i](x))
+        x = self.layers[-1](x)
         return x
 
     def log_prior(self):
         # calculate the log prior over all the layers
-        return self.hidden.log_prior + self.out.log_prior
+        log_prior = 0
+        for i in range(len(self.layers)):
+            log_prior += self.layers[i].log_prior
+
+        return log_prior  # self.hidden.log_prior + self.out.log_prior
 
     def log_post(self):
+        log_post = 0
+        for i in range(len(self.layers)):
+            log_post += self.layers[i].log_post
         # calculate the log posterior over all the layers
-        return self.hidden.log_post + self.out.log_post
+        return log_post  # self.hidden.log_post + self.out.log_post
 
     def sample_elbo(self, input, target, samples):
         # we calculate the negative elbo, which will be our loss function
