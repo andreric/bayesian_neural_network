@@ -2,18 +2,22 @@
 # @Author: Andre Goncalves
 # @Date:   2019-10-31 16:27:32
 # @Last Modified by:   Andre Goncalves
-# @Last Modified time: 2019-11-01 15:42:27
+# @Last Modified time: 2019-11-01 14:29:39
 
 """ code from: https://joshfeldman.net/ml/2018/12/17/WeightUncertainty.html
 """
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
+# import torch.optim as optim
 from torch.distributions import Normal
-import numpy as np
-from scipy.stats import norm
-import matplotlib.pyplot as plt
+# import numpy as np
+# from scipy.stats import norm
+# import matplotlib.pyplot as plt
+
+# NOISE_PRIOR_K = 1
+# NOISE_PRIOR_RATE = 2
+# NOISE_PRIOR_RHO_VAR = 0
 
 
 class Linear_BBB(nn.Module):
@@ -65,9 +69,9 @@ class Linear_BBB(nn.Module):
         self.log_prior = torch.sum(w_log_prior) + torch.sum(b_log_prior)
 
         # record log variational posterior by evaluating log pdf of normal distribution defined by parameters with respect at the sampled values
-        self.w_post = Normal(self.w_mu.data, torch.log(1 + torch.exp(self.w_rho)))
-        self.b_post = Normal(self.b_mu.data, torch.log(1 + torch.exp(self.b_rho)))
-        self.log_post = self.w_post.log_prob(self.w).sum() + self.b_post.log_prob(self.b).sum()
+        w_post = Normal(self.w_mu.data, torch.log(1 + torch.exp(self.w_rho)))
+        b_post = Normal(self.b_mu.data, torch.log(1 + torch.exp(self.b_rho)))
+        self.log_post = w_post.log_prob(self.w).sum() + b_post.log_prob(self.b).sum()
 
         return F.linear(input, self.w, self.b)
 
@@ -75,7 +79,8 @@ class Linear_BBB(nn.Module):
 class MLP_BBB(nn.Module):
 
     def __init__(self, input_size, output_size,
-                 hidden_units, noise_tol=.1, prior_var=1.):
+                 hidden_units, prior_var=1.,
+                 prior_noise_var=.1):
 
         self.arch = hidden_units
         # initialize the network like you would with a standard multilayer perceptron, but using the BBB layer
@@ -86,27 +91,42 @@ class MLP_BBB(nn.Module):
             self.layers.extend([Linear_BBB(self.arch[i - 1], self.arch[i], prior_var=prior_var)])  # hidden layers
         self.layers.append(Linear_BBB(self.arch[-1], output_size, prior_var=prior_var))  # output layers
 
-        self.noise_tol = noise_tol  # we will use the noise tolerance to calculate our likelihood
+        self.noise = None
+        self.noise_mu = nn.Parameter(torch.tensor([0.]))
+        self.noise_rho = nn.Parameter(torch.tensor([1.]))
+        self.noise_prior = torch.distributions.Normal(0, prior_noise_var)
 
     def forward(self, x):
         # again, this is equivalent to a standard multilayer perceptron
         for i in range(len(self.layers) - 1):
             x = torch.tanh(self.layers[i](x))
         x = self.layers[-1](x)
+
+        # compute elements for later ELBO computation
+        # this is reparametrization trick
+        rho_epsilon = Normal(0, 1).sample(self.noise_mu.shape)  # sample epsilon
+        self.noise = self.noise_mu + torch.log(1 + torch.exp(self.noise_rho)) * rho_epsilon
+        self.noise_log_prior = torch.sum(self.noise_prior.log_prob(self.noise))
+
+        rho_post = Normal(self.noise_mu.data, torch.log(1 + torch.exp(self.noise_rho)))
+        self.noise_log_post = rho_post.log_prob(self.noise).sum()
+
         return x
 
     def log_prior(self):
-        # calculate the log prior over all the layers
+        """ Calculate the log prior over all the layers. """
         log_prior = 0
         for i in range(len(self.layers)):
             log_prior += self.layers[i].log_prior
+        log_prior += self.noise_log_prior
         return log_prior
 
     def log_post(self):
+        """ Calculate the log posterior over all the layers """
         log_post = 0
         for i in range(len(self.layers)):
             log_post += self.layers[i].log_post
-        # calculate the log posterior over all the layers
+        log_post += self.noise_log_post
         return log_post
 
     def sample_elbo(self, input, target, samples):
@@ -116,16 +136,21 @@ class MLP_BBB(nn.Module):
         log_priors = torch.zeros(samples)
         log_posts = torch.zeros(samples)
         log_likes = torch.zeros(samples)
+
+        # noise_tol = torch.tensor([0.1])
+
         # make predictions and calculate prior, posterior, and likelihood for a given number of samples
         for i in range(samples):
-            outputs[i] = self(input).reshape(-1)  # make predictions
+            outputs[i] = self(input).reshape(-1)  # make predictions - forward
             log_priors[i] = self.log_prior()  # get log prior
             log_posts[i] = self.log_post()  # get log variational posterior
-            log_likes[i] = Normal(outputs[i], self.noise_tol).log_prob(target.reshape(-1)).sum()  # calculate the log likelihood
+            log_likes[i] = Normal(outputs[i], torch.log(1 + torch.exp(self.noise))).log_prob(target.reshape(-1)).sum()  # calculate the log likelihood
+
         # calculate monte carlo estimate of prior posterior and likelihood
         log_prior = log_priors.mean()
         log_post = log_posts.mean()
         log_like = log_likes.mean()
+
         # calculate the negative elbo (which is our loss function)
         loss = log_post - log_prior - log_like
         return loss
