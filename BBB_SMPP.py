@@ -2,7 +2,7 @@
 # @Author: Andre Goncalves
 # @Date:   2019-10-31 16:27:32
 # @Last Modified by:   Andre Goncalves
-# @Last Modified time: 2019-11-14 23:17:09
+# @Last Modified time: 2019-11-15 13:37:53
 
 """ code from: https://joshfeldman.net/ml/2018/12/17/WeightUncertainty.html """
 import math
@@ -114,8 +114,6 @@ class ScaleMixtureGaussian_VarPost(object):
         epsilon = self.normal.sample(self.rho1.size())
         return mode * self.sigma1 * epsilon + (1 - mode) * self.sigma2 * epsilon
 
-        # return value
-
     def log_prob(self, input):
         prob1 = torch.exp(self.gaussian1.log_prob(input))
         prob2 = torch.exp(self.gaussian2.log_prob(input))
@@ -164,8 +162,8 @@ class BayesianLinear(nn.Module):
         weight = self.weight.sample()
         bias = self.bias.sample()
         # else:
-            # weight = self.weight.mu
-            # bias = self.bias.mu
+        # weight = self.weight.mu
+        # bias = self.bias.mu
 
         if self.training or calculate_log_probs:
             self.log_prior = self.prior.log_prob(weight) + self.prior.log_prob(bias)

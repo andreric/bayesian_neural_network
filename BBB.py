@@ -2,11 +2,7 @@
 # @Author: Andre Goncalves
 # @Date:   2019-10-31 16:27:32
 # @Last Modified by:   Andre Goncalves
-<<<<<<< HEAD
-# @Last Modified time: 2019-10-31 22:54:03
-=======
-# @Last Modified time: 2019-11-01 15:42:27
->>>>>>> cdd3ad3eb9291d1edbf5ddfc5058ebb6c11d637b
+# @Last Modified time: 2019-11-15 13:20:13
 
 """ code from: https://joshfeldman.net/ml/2018/12/17/WeightUncertainty.html
 """
@@ -25,7 +21,7 @@ class Linear_BBB(nn.Module):
         Layer of our BNN.
     """
 
-    def __init__(self, input_features, output_features, prior_var=1.):
+    def __init__(self, input_features, output_features, prior_std=1.):
         """
             Initialization of our layer : our prior is a normal distribution
             centered in 0 and of variance 20.
@@ -49,7 +45,7 @@ class Linear_BBB(nn.Module):
         self.b = None
 
         # initialize prior distribution for all of the weights and biases
-        self.prior = torch.distributions.Normal(0, prior_var)
+        self.prior = torch.distributions.Normal(0, prior_std)
 
     def forward(self, input):
         """
@@ -78,46 +74,28 @@ class Linear_BBB(nn.Module):
 
 class MLP_BBB(nn.Module):
 
-<<<<<<< HEAD
-    def __init__(self, input_size, output_size, 
-                 hidden_units, noise_tol=.1, prior_var=1.):
-
-        self.arch = hidden_units
-        # self.num_hidden_layers = len(num_hidden_layers)
-        # initialize the network like you would with a standard multilayer perceptron, but using the BBB layer
-        super().__init__()
-        # self.hidden = Linear_BBB(1, hidden_units, prior_var=prior_var)
-        # self.out = Linear_BBB(hidden_units, 1, prior_var=prior_var)
-        
-
-        self.layers = nn.ModuleList([Linear_BBB(input_size, self.arch[0], prior_var=prior_var)])  # input layer
-        for i in range(1, len(hidden_units)):
-            self.layers.extend([Linear_BBB(self.arch[i-1], self.arch[i], prior_var=prior_var) ])  # hidden layers
-=======
     def __init__(self, input_size, output_size,
-                 hidden_units, noise_tol=.1, prior_var=1.):
+                 hidden_units, noise_tol=.1, prior_std=1.):
 
         self.arch = hidden_units
         # initialize the network like you would with a standard multilayer perceptron, but using the BBB layer
         super().__init__()
 
-        self.layers = nn.ModuleList([Linear_BBB(input_size, self.arch[0], prior_var=prior_var)])  # input layer
+        self.layers = nn.ModuleList([Linear_BBB(input_size, self.arch[0], prior_std=prior_std)])  # input layer
         for i in range(1, len(hidden_units)):
-            self.layers.extend([Linear_BBB(self.arch[i - 1], self.arch[i], prior_var=prior_var)])  # hidden layers
->>>>>>> cdd3ad3eb9291d1edbf5ddfc5058ebb6c11d637b
-        self.layers.append(Linear_BBB(self.arch[-1], output_size, prior_var=prior_var))  # output layers
+            self.layers.extend([Linear_BBB(self.arch[i - 1], self.arch[i], prior_std=prior_std)])  # hidden layers
+        self.layers.append(Linear_BBB(self.arch[-1], output_size, prior_std=prior_std))  # output layers
 
         self.noise_tol = noise_tol  # we will use the noise tolerance to calculate our likelihood
 
-
     def forward(self, x):
+
         # again, this is equivalent to a standard multilayer perceptron
-<<<<<<< HEAD
-        for i in range(len(self.layers)-1):
-=======
         for i in range(len(self.layers) - 1):
->>>>>>> cdd3ad3eb9291d1edbf5ddfc5058ebb6c11d637b
-            x = torch.tanh(self.layers[i](x))
+            # if i == 0:
+            x = torch.relu(self.layers[i](x))
+            # else:
+                # x = torch.tanh(self.layers[i](x))
         x = self.layers[-1](x)
         return x
 
@@ -126,23 +104,14 @@ class MLP_BBB(nn.Module):
         log_prior = 0
         for i in range(len(self.layers)):
             log_prior += self.layers[i].log_prior
-<<<<<<< HEAD
-
-        return log_prior  # self.hidden.log_prior + self.out.log_prior
-=======
         return log_prior
->>>>>>> cdd3ad3eb9291d1edbf5ddfc5058ebb6c11d637b
 
     def log_post(self):
         log_post = 0
         for i in range(len(self.layers)):
             log_post += self.layers[i].log_post
         # calculate the log posterior over all the layers
-<<<<<<< HEAD
         return log_post  # self.hidden.log_post + self.out.log_post
-=======
-        return log_post
->>>>>>> cdd3ad3eb9291d1edbf5ddfc5058ebb6c11d637b
 
     def sample_elbo(self, input, target, samples):
         # we calculate the negative elbo, which will be our loss function
@@ -168,7 +137,7 @@ class MLP_BBB(nn.Module):
 
 # def test():
 
-#     net = MLP_BBB(32, prior_var=10)
+#     net = MLP_BBB(32, prior_std=10)
 #     optimizer = optim.Adam(net.parameters(), lr=.1)
 #     epochs = 2000
 #     for epoch in range(epochs):  # loop over the dataset multiple times
