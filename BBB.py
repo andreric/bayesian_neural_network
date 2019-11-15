@@ -2,7 +2,7 @@
 # @Author: Andre Goncalves
 # @Date:   2019-10-31 16:27:32
 # @Last Modified by:   Andre Goncalves
-# @Last Modified time: 2019-11-15 13:20:13
+# @Last Modified time: 2019-11-15 14:01:38
 
 """ code from: https://joshfeldman.net/ml/2018/12/17/WeightUncertainty.html
 """
@@ -75,9 +75,10 @@ class Linear_BBB(nn.Module):
 class MLP_BBB(nn.Module):
 
     def __init__(self, input_size, output_size,
-                 hidden_units, noise_tol=.1, prior_std=1.):
+                 hidden_units, activ_func, noise_tol=.1, prior_std=1.):
 
         self.arch = hidden_units
+        self.activ_func = activ_func
         # initialize the network like you would with a standard multilayer perceptron, but using the BBB layer
         super().__init__()
 
@@ -90,12 +91,14 @@ class MLP_BBB(nn.Module):
 
     def forward(self, x):
 
-        # again, this is equivalent to a standard multilayer perceptron
+        # standard multilayer perceptron
         for i in range(len(self.layers) - 1):
-            # if i == 0:
-            x = torch.relu(self.layers[i](x))
-            # else:
-                # x = torch.tanh(self.layers[i](x))
+            if self.activ_func[i] == 'relu':
+                x = torch.relu(self.layers[i](x))
+            elif self.activ_func[i] == 'tanh':
+                x = torch.tanh(self.layers[i](x))
+            else:
+                raise ValueError("Unknown activation function: {}".format(self.activ_func[i]))
         x = self.layers[-1](x)
         return x
 
