@@ -2,7 +2,7 @@
 # @Author: Andre Goncalves
 # @Date:   2019-10-31 16:27:32
 # @Last Modified by:   Andre Goncalves
-# @Last Modified time: 2019-11-14 13:00:12
+# @Last Modified time: 2019-11-14 17:23:19
 
 """ code from: https://joshfeldman.net/ml/2018/12/17/WeightUncertainty.html """
 import math
@@ -12,28 +12,28 @@ import torch.nn.functional as F
 from torch.distributions import Normal
 
 
-class Gaussian(object):
-    def __init__(self, mu, rho):
-        super().__init__()
-        self.mu = mu
-        self.rho = rho
-        self.normal = torch.distributions.Normal(0, 1)
+# class Gaussian(object):
+#     def __init__(self, mu, rho):
+#         super().__init__()
+#         self.mu = mu
+#         self.rho = rho
+#         self.normal = torch.distributions.Normal(0, 1)
 
-    @property
-    def sigma(self):
-        return torch.log1p(torch.exp(self.rho))
+#     @property
+#     def sigma(self):
+#         return torch.log1p(torch.exp(self.rho))
 
-    def sample(self):
-        epsilon = self.normal.sample(self.rho.size())  # .to(DEVICE)
-        return self.mu + self.sigma * epsilon
+#     def sample(self):
+#         epsilon = self.normal.sample(self.rho.size())  # .to(DEVICE)
+#         return self.mu + self.sigma * epsilon
 
-    def log_prob(self, input):
-        return (-math.log(math.sqrt(2 * math.pi)) -
-                torch.log(self.sigma) -
-                ((input - self.mu) ** 2) / (2 * self.sigma ** 2)).sum()
+#     def log_prob(self, input):
+#         return (-math.log(math.sqrt(2 * math.pi)) -
+#                 torch.log(self.sigma) -
+#                 ((input - self.mu) ** 2) / (2 * self.sigma ** 2)).sum()
 
 
-class ScaleMixtureGaussian(object):
+class ScaleMixtureGaussian_Prior(object):
 
     def __init__(self, pi, sigma1, sigma2):
         super().__init__()
@@ -42,6 +42,63 @@ class ScaleMixtureGaussian(object):
         self.sigma2 = sigma2
         self.gaussian1 = torch.distributions.Normal(0, sigma1)
         self.gaussian2 = torch.distributions.Normal(0, sigma2)
+
+    def log_prob(self, input):
+        prob1 = torch.exp(self.gaussian1.log_prob(input))
+        prob2 = torch.exp(self.gaussian2.log_prob(input))
+        return (torch.log(self.pi * prob1 + (1 - self.pi) * prob2)).sum()
+
+
+class ScaleMixtureGaussian_VarPost(object):
+
+    def __init__(self, pi, sigma1, sigma2):
+        super().__init__()
+        self.pi = pi
+        self.rho1 = sigma1
+        self.rho2 = sigma2
+
+        self.normal = torch.distributions.Normal(0, 1)
+        self.gumbel = torch.distributions.Gumbel(0, 1)
+
+        self.gaussian1 = torch.distributions.Normal(0, self.sigma1)
+        self.gaussian2 = torch.distributions.Normal(0, self.sigma2)
+
+    @property
+    def sigma1(self):
+        return torch.log1p(torch.exp(self.rho1))
+
+    @property
+    def sigma2(self):
+        return torch.log1p(torch.exp(self.rho2))
+
+    def sample(self):
+        """ Sample from variation posterior distribution. """
+        # print('pi: {}'.format(self.pi.shape))
+        z = self.gumbel.sample((*self.pi.shape, 2)).squeeze_()
+        # print('z: {}'.format(z))
+        if len(self.pi.shape) > 1:
+            x = torch.stack((self.pi, 1 - self.pi), dim=2).squeeze_()
+        else:
+            x = torch.cat((self.pi.view(-1, 1), 1 - self.pi.view(-1, 1)), 1)  # torch.tensor()
+
+        # print('x.shape: {}'.format(x.shape))
+        # print('z.shape: {}'.format(z.shape))
+
+        mode = torch.argmax(x + z, dim=1).float().resize_(self.pi.shape)  # unsqueeze_(-1)
+        # print('Mode from gumbel: {}'.format(mode))
+
+        epsilon = self.normal.sample(self.rho1.size())
+        # print('epsilon: {}'.format(epsilon.shape))
+        # print('sigma1: {}'.format(self.sigma1.shape))
+        # print('mode: {}'.format(mode.shape))
+        # print(mode * self.sigma1 * epsilon)
+        value = mode * self.sigma1 * epsilon + (1 - mode) * self.sigma2 * epsilon
+        # value.squeeze_(-1)
+        # print('value: {}'.format(value.shape))
+        assert self.pi.shape == value.shape
+        return value
+        # else:
+        # return self.sigma2 * epsilon
 
     def log_prob(self, input):
         prob1 = torch.exp(self.gaussian1.log_prob(input))
@@ -61,19 +118,24 @@ class BayesianLinear(nn.Module):
         self.out_features = out_features
 
         # initialize mu and rho parameters for the weights of the layer
-        self.w_mu = nn.Parameter(torch.zeros(self.out_features, self.in_features))
-        self.w_rho = nn.Parameter(torch.zeros(self.out_features, self.in_features))
+        self.w_pi = nn.Parameter(torch.zeros(self.out_features, self.in_features))
+        self.w_rho1 = nn.Parameter(torch.zeros(self.out_features, self.in_features))
+        self.w_rho2 = nn.Parameter(torch.zeros(self.out_features, self.in_features))
+
+        self.b_pi = nn.Parameter(torch.zeros(self.out_features))
+        self.b_rho1 = nn.Parameter(torch.zeros(self.out_features))
+        self.b_rho2 = nn.Parameter(torch.zeros(self.out_features))
 
         # initialize mu and rho parameters for the layer's bias
-        self.b_mu = nn.Parameter(torch.zeros(self.out_features))
-        self.b_rho = nn.Parameter(torch.zeros(self.out_features))
+        # self.b_mu = nn.Parameter(torch.zeros(self.out_features))
+        # self.b_rho = nn.Parameter(torch.zeros(self.out_features))
 
         # Weight and bias parameters of the variational posterior
-        self.weight = Gaussian(self.w_mu, self.w_rho)
-        self.bias = Gaussian(self.b_mu, self.b_rho)
+        self.weight = ScaleMixtureGaussian_VarPost(self.w_pi, self.w_rho1, self.w_rho2)
+        self.bias = ScaleMixtureGaussian_VarPost(self.b_pi, self.b_rho1, self.b_rho2)
 
         # initialize prior distribution for all of the weights and biases
-        self.prior = ScaleMixtureGaussian(priors['pi'], priors['sigma1'], priors['sigma2'])
+        self.prior = ScaleMixtureGaussian_Prior(priors['pi'], priors['sigma1'], priors['sigma2'])
 
         self.log_prior = 0
         self.log_post = 0  # variational posterior
